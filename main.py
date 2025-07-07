@@ -3,12 +3,19 @@ import json
 import uuid
 
 # Cloudflare API credentials
-CLOUDFLARE_API_KEY = "key"
-#
-#Account
-#所有区域 - 区域 WAF:编辑, 区域设置:编辑, 区域:读取, 区域:编辑
-#所有用户 - 用户详细信息:读取
-#
+CLOUDFLARE_API_KEY = "pkrz2em4AvYQrX4ndisahSlXaQH7swKTkao5ccdG"
+
+PHASE_DESCRIPTIONS = {
+    "http_request_origin": "源站规则（Origin Rules），控制请求到源站的行为，如修改 Host、端口等",
+    "http_request_dynamic_redirect": "动态重定向规则，按条件重定向请求",
+    "http_ratelimit": "速率限制规则，防止恶意流量/刷接口",
+    "ddos_l7": "L7 DDoS 防护规则",
+    "http_config_settings": "HTTP 配置设置规则，如自动 HTTPS、缓存等",
+    "http_request_firewall_custom": "WAF 自定义防火墙规则",
+    "http_request_cache_settings": "缓存设置规则",
+    "http_request_sanitize": "URL 规范化/清洗规则",
+    "http_response_headers_transform": "响应头修改规则"
+}
 
 def get_user_info():
     """获取用户信息"""
@@ -83,44 +90,40 @@ def get_source_ruleset(zone_id):
         print(f"获取ruleset失败: {e}")
         return None
 
-def get_ruleset_details(zone_id, ruleset_id):
-    """获取指定zone中ruleset的详细规则信息"""
-    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets/{ruleset_id}"
-    
+def get_all_rulesets(zone_id):
+    """获取指定zone下的所有ruleset"""
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets"
     headers = {
         "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
         "Content-Type": "application/json"
     }
-    
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
-        
+        rulesets_data = response.json()
+        return rulesets_data['result']
+    except Exception as e:
+        print(f"获取ruleset失败: {e}")
+        return []
+
+def get_ruleset_details(zone_id, ruleset_id):
+    """获取指定zone中ruleset的详细规则信息"""
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets/{ruleset_id}"
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
         ruleset_data = response.json()
         ruleset = ruleset_data['result']
-        
-        # 从ruleset中获取rules数组
-        rules = ruleset.get('rules', [])
-        
-        # if rules:
-        #     print(f"      包含 {len(rules)} 条规则:")
-        #     for i, rule in enumerate(rules, 1):
-        #         print(f"        规则 {i}:")
-        #         print(f"          ID: {rule.get('id', 'N/A')}")
-        #         print(f"          描述: {rule.get('description', 'N/A')}")
-        #         #print(f"          表达式: {rule.get('expression', 'N/A')}")
-        #         print(f"          动作: {rule.get('action', 'N/A')}")
-        #         print(f"          启用状态: {rule.get('enabled', 'N/A')}")
-        #         print(f"          最后修改: {rule.get('last_updated', 'N/A')}")
-        #         print()
-        # else:
-        #     print("      没有找到具体规则")
-            
     except requests.exceptions.RequestException as e:
         print(f"      获取ruleset详情失败: {e}")
+        return None
     except ValueError as e:
         print(f"      JSON解析错误: {e}")
-    
+        return None
     return ruleset
 
 def delete_ruleset(zone_id, ruleset_id, zone_name):
@@ -158,28 +161,15 @@ def delete_ruleset(zone_id, ruleset_id, zone_name):
         print(f"  ❌ 删除 {zone_name} 的ruleset失败: {e}")
         return False
 
-def add_rules_to_ruleset(zone_id, zone_name, rules_data):
-    """为指定zone的现有ruleset添加规则"""
-    # 先获取现有的ruleset
-    ruleset = get_source_ruleset(zone_id)
-    if not ruleset:
-        print(f"  {zone_name} 没有找到ruleset，无法添加规则")
-        return None
-    
-    ruleset_id = ruleset.get('id')
-    ruleset_name = ruleset.get('name', 'N/A')
-    
-    print(f"  为 {zone_name} 的ruleset '{ruleset_name}' 添加规则...")
-    
+def add_rules_to_ruleset(zone_id, zone_name, ruleset_id, rules_data):
+    """为指定zone的指定ruleset添加规则"""
     headers = {
         "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
         "Content-Type": "application/json"
     }
-    
     # 为ruleset添加规则
     rules_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets/{ruleset_id}/rules"
     success_count = 0
-    
     for rule in rules_data:
         try:
             rule_response = requests.post(rules_url, headers=headers, json=rule)
@@ -192,44 +182,28 @@ def add_rules_to_ruleset(zone_id, zone_name, rules_data):
                 print(f"    ❌ 添加规则失败: {rule_result.get('errors', [])}")
         except requests.exceptions.RequestException as e:
             print(f"    ❌ 添加规则失败: {e}")
-    
     print(f"  ✅ 成功为 {zone_name} 添加了 {success_count} 条规则")
-    return ruleset
+    return True
 
-def delete_all_rules_in_ruleset(zone_id, zone_name):
-    """删除指定zone的ruleset中的所有规则"""
-    # 先获取ruleset
-    ruleset = get_source_ruleset(zone_id)
-    if not ruleset:
-        print(f"  {zone_name} 没有找到ruleset")
-        return True
-    
-    ruleset_id = ruleset.get('id')
-    ruleset_name = ruleset.get('name', 'N/A')
-    
+def delete_all_rules_in_ruleset(zone_id, zone_name, ruleset_id):
+    """删除指定zone的指定ruleset中的所有规则"""
     # 获取详细的ruleset信息
     detailed_ruleset = get_ruleset_details(zone_id, ruleset_id)
     if not detailed_ruleset:
         print(f"  {zone_name} 无法获取详细ruleset信息")
         return False
-    
     rules = detailed_ruleset.get('rules', [])
     if not rules:
         print(f"  {zone_name} 的ruleset中没有规则")
         return True
-    
-    print(f"  发现 {zone_name} 的ruleset '{ruleset_name}' 包含 {len(rules)} 条规则，正在删除...")
-    
+    print(f"  发现 {zone_name} 的ruleset包含 {len(rules)} 条规则，正在删除...")
     headers = {
         "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
         "Content-Type": "application/json"
     }
-    
-    # 删除所有规则
     for rule in rules:
         rule_id = rule.get('id')
         rule_description = rule.get('description', 'N/A')
-        
         if rule_id:
             delete_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets/{ruleset_id}/rules/{rule_id}"
             try:
@@ -240,7 +214,6 @@ def delete_all_rules_in_ruleset(zone_id, zone_name):
                     print(f"    ❌ 删除规则失败: {rule_description}，状态码: {delete_response.status_code}")
             except Exception as e:
                 print(f"    ❌ 删除规则失败: {rule_description}，错误: {e}")
-    
     print(f"  ✅ 完成删除 {zone_name} 的所有规则")
     return True
 
@@ -263,6 +236,60 @@ def replace_hostname_in_rules(rules_data, source_domain, target_domain):
         modified_rules.append(rule_copy)
     
     return modified_rules
+
+def update_origin_ruleset(zone_id, ruleset_id, rules):
+    """整体替换 Origin Rules（phase: http_request_origin）"""
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets/{ruleset_id}"
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {"rules": rules}
+    try:
+        response = requests.put(url, headers=headers, json=data)
+        if response.status_code == 200:
+            print("  ✅ Origin ruleset 替换成功")
+            return True
+        else:
+            print(f"  ❌ 替换失败: {response.status_code} {response.text}")
+            return False
+    except Exception as e:
+        print(f"  ❌ 替换失败: {e}")
+        return False
+
+def get_zone_ruleset_by_phase(zone_id, phase):
+    """查找指定 zone 下 phase=xxx 的 zone ruleset"""
+    rulesets = get_all_rulesets(zone_id)
+    for rs in rulesets:
+        if rs.get('kind') == 'zone' and rs.get('phase') == phase:
+            return rs
+    return None
+
+def create_zone_ruleset(zone_id, phase, name='Custom Origin Ruleset'):
+    """为 zone 创建指定 phase 的 ruleset（kind: zone）"""
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets"
+    headers = {
+        "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "name": name,
+        "kind": "zone",
+        "phase": phase,
+        "description": f"Auto-created ruleset for {phase}",
+        "rules": []
+    }
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        if response.status_code == 200:
+            print(f"  ✅ 已自动创建 phase={phase} 的 zone ruleset")
+            return response.json()['result']
+        else:
+            print(f"  ❌ 创建 ruleset 失败: {response.status_code} {response.text}")
+            return None
+    except Exception as e:
+        print(f"  ❌ 创建 ruleset 失败: {e}")
+        return None
 
 def main():
     print("=== Cloudflare WAF规则复制工具 ===")
@@ -299,20 +326,34 @@ def main():
     
     print(f"\n选择的源域名: {source_zone['name']}")
     
-    # 获取源域名的ruleset
-    source_ruleset1 = get_source_ruleset(source_zone['id'])
-    if not source_ruleset1:
-        print(f"在 {source_zone['name']} 中没有找到符合条件的ruleset")
+    # 新增：只显示 kind == 'zone' 的 ruleset
+    all_rulesets = get_all_rulesets(source_zone['id'])
+    zone_rulesets = [rs for rs in all_rulesets if rs.get('kind') == 'zone']
+    if not zone_rulesets:
+        print(f"在 {source_zone['name']} 中没有可迁移的自定义 ruleset")
         return
+    print(f"\n可迁移的 ruleset:")
+    for i, rs in enumerate(zone_rulesets, 1):
+        phase = rs.get('phase', '')
+        desc = PHASE_DESCRIPTIONS.get(phase, '')
+        print(f"  {i}. name: {rs.get('name','')} | phase: {phase} | id: {rs.get('id','')} | {desc}")
+    print(f"\n请选择要迁移的 ruleset（输入数字1-{len(zone_rulesets)}）:")
+    try:
+        ruleset_index = int(input()) - 1
+        if ruleset_index < 0 or ruleset_index >= len(zone_rulesets):
+            print("无效的选择")
+            return
+        selected_ruleset = zone_rulesets[ruleset_index]
+    except ValueError:
+        print("请输入有效的数字")
+        return
+    print(f"\n选择的ruleset: {selected_ruleset.get('name','')} | phase: {selected_ruleset.get('phase','')}")
     
-    print(f"找到源ruleset: {source_ruleset1['name']}")
-    
-    # 获取详细的ruleset信息（包含完整的规则数据）
-    source_ruleset = get_ruleset_details(source_zone['id'], source_ruleset1['id'])
+    # 获取详细的ruleset信息
+    source_ruleset = get_ruleset_details(source_zone['id'], selected_ruleset['id'])
     if not source_ruleset:
         print(f"无法获取 {source_zone['name']} 的详细ruleset信息")
         return
-    
     print(f"包含 {len(source_ruleset.get('rules', []))} 条规则")
     
     # 显示源规则
@@ -411,22 +452,31 @@ def main():
     
     for zone in target_zones:
         print(f"\n处理域名: {zone['name']}")
-        
-        # 删除所有现有的规则
-        print(f"  检查并删除现有规则...")
-        delete_success = delete_all_rules_in_ruleset(zone['id'], zone['name'])
-        if not delete_success:
-            print(f"  跳过 {zone['name']}，因为删除失败")
-            continue
-        
+        # 查找目标域名下同类型ruleset
+        target_ruleset = get_zone_ruleset_by_phase(zone['id'], selected_ruleset.get('phase'))
+        if not target_ruleset:
+            print(f"  没有找到 phase={selected_ruleset.get('phase')} kind=zone 的ruleset，自动创建...")
+            target_ruleset = create_zone_ruleset(zone['id'], selected_ruleset.get('phase'))
+            if not target_ruleset:
+                print(f"  创建失败，跳过")
+                continue
         # 替换规则中的主机名
         print(f"  替换规则中的主机名...")
         target_rules = replace_hostname_in_rules(rules_data, source_zone['name'], zone['name'])
-        
-        # 添加规则到现有ruleset
-        print(f"  添加规则到现有ruleset...")
-        result = add_rules_to_ruleset(zone['id'], zone['name'], target_rules)
-        
+        # 根据 phase 选择 API 操作
+        if selected_ruleset.get('phase') == 'http_request_origin':
+            # Origin Rules: 直接整体替换
+            print(f"  用 PUT 替换 Origin Ruleset ...")
+            result = update_origin_ruleset(zone['id'], target_ruleset['id'], target_rules)
+        else:
+            # 其它类型，先删后加
+            print(f"  检查并删除现有规则...")
+            delete_success = delete_all_rules_in_ruleset(zone['id'], zone['name'], target_ruleset['id'])
+            if not delete_success:
+                print(f"  跳过 {zone['name']}，因为删除失败")
+                continue
+            print(f"  添加规则到现有ruleset...")
+            result = add_rules_to_ruleset(zone['id'], zone['name'], target_ruleset['id'], target_rules)
         if result:
             success_count += 1
     
@@ -434,4 +484,5 @@ def main():
     print(f"成功处理: {success_count}/{len(target_zones)} 个域名")
 
 if __name__ == "__main__":
+    main() 
     main() 
