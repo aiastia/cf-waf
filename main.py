@@ -3,7 +3,7 @@ import json
 import uuid
 
 # Cloudflare API credentials
-CLOUDFLARE_API_KEY = "pkrz2em4AvYQrX4ndisahSlXaQH7swKTkao5ccdG"
+CLOUDFLARE_API_KEY = "key"
 
 PHASE_DESCRIPTIONS = {
     "http_request_origin": "源站规则（Origin Rules），控制请求到源站的行为，如修改 Host、端口等",
