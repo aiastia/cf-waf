@@ -162,28 +162,36 @@ def delete_ruleset(zone_id, ruleset_id, zone_name):
         return False
 
 def add_rules_to_ruleset(zone_id, zone_name, ruleset_id, rules_data):
-    """为指定zone的指定ruleset添加规则"""
+    """为指定zone的指定ruleset添加规则，详细统计每条规则添加成功/失败，输出失败原因"""
     headers = {
         "Authorization": f"Bearer {CLOUDFLARE_API_KEY}",
         "Content-Type": "application/json"
     }
-    # 为ruleset添加规则
     rules_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/rulesets/{ruleset_id}/rules"
     success_count = 0
+    fail_count = 0
+    fail_details = []
     for rule in rules_data:
         try:
             rule_response = requests.post(rules_url, headers=headers, json=rule)
-            rule_response.raise_for_status()
-            rule_result = rule_response.json()
-            if rule_result.get('success'):
+            if rule_response.status_code == 200:
                 print(f"    ✅ 添加规则: {rule.get('description', 'N/A')}")
                 success_count += 1
             else:
-                print(f"    ❌ 添加规则失败: {rule_result.get('errors', [])}")
-        except requests.exceptions.RequestException as e:
-            print(f"    ❌ 添加规则失败: {e}")
+                print(f"    ❌ 添加规则失败: {rule.get('description', 'N/A')}，状态码: {rule_response.status_code}")
+                print(f"       错误详情: {rule_response.text}")
+                fail_count += 1
+                fail_details.append((rule.get('description', 'N/A'), rule_response.status_code, rule_response.text))
+        except Exception as e:
+            print(f"    ❌ 添加规则失败: {rule.get('description', 'N/A')}，错误: {e}")
+            fail_count += 1
+            fail_details.append((rule.get('description', 'N/A'), 'Exception', str(e)))
     print(f"  ✅ 成功为 {zone_name} 添加了 {success_count} 条规则")
-    return True
+    if fail_count > 0:
+        print(f"  ❌ 有 {fail_count} 条规则添加失败，详情：")
+        for desc, code, detail in fail_details:
+            print(f"    - 规则: {desc}，状态码/异常: {code}，详情: {detail}")
+    return success_count == len(rules_data)
 
 def delete_all_rules_in_ruleset(zone_id, zone_name, ruleset_id):
     """删除指定zone的指定ruleset中的所有规则"""
